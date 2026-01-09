@@ -8,26 +8,154 @@ from PIL import Image
 import re
 import time
 import os
-from datetime import datetime  # <--- ¡ESTA ERA LA LÍNEA QUE FALTABA!
+from datetime import datetime
 
-# ================= CONFIGURACIÓN =================
+# ================= 1. CONFIGURACIÓN (Debe ir al principio) =================
 st.set_page_config(page_title="Cicla 3D - Pedidos", page_icon="🚴", layout="wide")
 
-# CREDENCIALES (Ruta validada)
-JSON_FILE = r'/Users/jdg_music_/Desktop/Cicla Proyect/service_account.json'
+# RUTA LOCAL (Solo se usa si falla la nube)
+JSON_FILE_LOCAL = '/Users/jdg_music_/Desktop/Cicla Proyect/service_account.json'
+
+# IDs de tu Google Sheet
 SHEET_ID = '1oeN-Iqrlc2hUuRhYDdrqqd7eez9wwPgGNbgAGi9CUVs'
 WORKSHEET_NAME = 'Respuestas de formulario 1'
 
-# LOGIN
+# Credenciales de Login de la App
 USER_LOGIN = "Cicla3D"
 PASS_LOGIN = "Cicla:D"
-
-# AUTO-REFRESCO (Segundos)
 REFRESH_SECONDS = 5
 
-# ================= LOGIN =================
+# ================= 2. CONEXIÓN INTELIGENTE (GOOGLE SHEETS) =================
+@st.cache_resource
+def connect_google():
+    """Conecta usando Secrets (Nube) o Archivo (Local)"""
+    scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+    creds = None
+
+    # INTENTO 1: Buscar en Secrets de Streamlit (Nube)
+    if "gcp_service_account" in st.secrets:
+        try:
+            # Convertimos los secrets a un diccionario normal
+            creds_dict = dict(st.secrets["gcp_service_account"])
+
+            # 🛠️ CORRECCIÓN VITAL: Arreglar saltos de línea en la clave privada
+            if "private_key" in creds_dict:
+                creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+
+            creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        except Exception as e:
+            st.error(f"⚠️ Error leyendo secrets: {e}")
+
+    # INTENTO 2: Buscar archivo local (Tu Mac)
+    if not creds and os.path.exists(JSON_FILE_LOCAL):
+        try:
+            creds = Credentials.from_service_account_file(JSON_FILE_LOCAL, scopes=scopes)
+        except Exception as e:
+            st.error(f"⚠️ Error leyendo archivo local: {e}")
+
+    # Si fallan los dos intentos
+    if not creds:
+        st.error("❌ No se pudo conectar. Verifica los Secrets en Streamlit Cloud o el archivo json en local.")
+        return None, None
+
+    # Si tenemos credenciales, conectamos
+    try:
+        gc = gspread.authorize(creds)
+        drive_service = build('drive', 'v3', credentials=creds)
+        return gc, drive_service
+    except Exception as e:
+        st.error(f"❌ Error autenticando con Google: {e}")
+        return None, None
+
+# ================= 3. LÓGICA DE DATOS =================
+@st.cache_data(ttl=REFRESH_SECONDS) 
+def load_data(_gc):
+    if _gc is None: return []
+    try:
+        sh = _gc.open_by_key(SHEET_ID)
+        ws = sh.worksheet(WORKSHEET_NAME)
+        all_values = ws.get_all_values()
+        
+        if not all_values: return []
+        headers, rows = all_values[0], all_values[1:]
+
+        def get_col_idx(keywords):
+            for i, h in enumerate(headers):
+                if any(k in str(h).lower().strip() for k in keywords): return i
+            return -1
+
+        def get_val(row, idx):
+            return str(row[idx]).strip() if idx != -1 and idx < len(row) else ""
+
+        # Mapeo de columnas
+        idx_foto = get_col_idx(["foto visualizar", "imagen de referencia"])
+        idx_dias = get_col_idx(["prioridad", "días restantes"])
+        idx_f_env = get_col_idx(["fecha de envio"])
+        idx_f_ent = get_col_idx(["fecha de entrega"])
+        idx_cli_nom = get_col_idx(["nombre del cliente"])
+        idx_cli_emp = get_col_idx(["nombre de la empresa"])
+        idx_cli_rut = get_col_idx(["rut:"]) 
+        idx_cli_tel = get_col_idx(["telefono:"])
+        idx_desc = get_col_idx(["descripción"])
+        idx_color = get_col_idx(["colores"])
+        idx_tipo = get_col_idx(["tipo de entrega"])
+        idx_req = get_col_idx(["requiere factura"])
+        idx_razon = get_col_idx(["razón social"])
+        idx_rut_fac = get_col_idx(["rut facturación"])
+        idx_giro = get_col_idx(["giro"])
+        idx_dir_fac = get_col_idx(["dirección facturación"])
+        idx_env_dir = get_col_idx(["dirección de envio"])
+        idx_env_com = get_col_idx(["comuna/ciudad"])
+        idx_env_ref = get_col_idx(["referencia (opcional)", "referencia opcional"]) 
+        idx_rec_nom = get_col_idx(["nombre de quien recibe"])
+        idx_rec_tel = get_col_idx(["telefono de quien recibe"])
+
+        processed = []
+        for row in rows:
+            if not any(row): continue
+            
+            d_raw = get_val(row, idx_dias)
+            try: dias = int(float(d_raw)) if d_raw else 999
+            except: dias = 999
+            
+            cli_txt = f"**{get_val(row, idx_cli_nom)}**\n\n🏢 {get_val(row, idx_cli_emp)}\n\n🆔 {get_val(row, idx_cli_rut)}\n\n📞 {get_val(row, idx_cli_tel)}"
+            
+            fact_txt = "❌ No"
+            if "si" in get_val(row, idx_req).lower():
+                fact_txt = f"✅ **SI**\n\nRaz: {get_val(row, idx_razon)}\n\nRUT: {get_val(row, idx_rut_fac)}\n\nGiro: {get_val(row, idx_giro)}\n\nDir: {get_val(row, idx_dir_fac)}"
+
+            ref = get_val(row, idx_env_ref)
+            if "http" in ref: ref = ""
+            env_txt = f"📍 {get_val(row, idx_env_dir)}\n\nCity: {get_val(row, idx_env_com)}\n\nRef: {ref}\n\nRec: {get_val(row, idx_rec_nom)} ({get_val(row, idx_rec_tel)})"
+
+            processed.append({
+                "sort": dias, "url": get_val(row, idx_foto), "dias": dias,
+                "f1": get_val(row, idx_f_env), "f2": get_val(row, idx_f_ent),
+                "cli": cli_txt, "desc": get_val(row, idx_desc), "col": get_val(row, idx_color),
+                "fact": fact_txt, "env": env_txt, "tipo": get_val(row, idx_tipo)
+            })
+
+        return sorted(processed, key=lambda x: x["sort"])
+    except Exception as e:
+        st.error(f"Error procesando datos: {e}")
+        return []
+
+@st.cache_data(show_spinner=False)
+def get_image(url, _drive_service):
+    if not url or "drive.google.com" not in str(url): return None
+    match = re.search(r'(?:id=|/d/)([a-zA-Z0-9_-]+)', str(url))
+    if not match: return None
+    try:
+        req = _drive_service.files().get_media(fileId=match.group(1))
+        fh = io.BytesIO()
+        dl = MediaIoBaseDownload(fh, req)
+        done = False
+        while not done: _, done = dl.next_chunk()
+        return Image.open(fh)
+    except: return None
+
+# ================= 4. INTERFAZ =================
 def check_login():
-    """Sistema simple de autenticación"""
     if 'logged_in' not in st.session_state:
         st.session_state['logged_in'] = False
 
@@ -48,231 +176,56 @@ def check_login():
         return False
     return True
 
-# ================= CONEXIONES =================
-@st.cache_resource
-def connect_google():
-    """Conecta a Google APIs (Se mantiene en memoria)"""
-    if not os.path.exists(JSON_FILE):
-        st.error(f"❌ No se encuentra: {JSON_FILE}")
-        return None, None
-
-    try:
-        scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-        creds = Credentials.from_service_account_file(JSON_FILE, scopes=scopes)
-        gc = gspread.authorize(creds)
-        drive_service = build('drive', 'v3', credentials=creds)
-        return gc, drive_service
-    except Exception as e:
-        st.error(f"Error de conexión: {e}")
-        return None, None
-
-@st.cache_data(ttl=REFRESH_SECONDS) 
-def load_data(_gc):
-    """Descarga y procesa datos del Sheet (Cacheado por 5s)"""
-    if _gc is None: return []
-    try:
-        sh = _gc.open_by_key(SHEET_ID)
-        ws = sh.worksheet(WORKSHEET_NAME)
-        all_values = ws.get_all_values()
-        
-        if not all_values: return []
-
-        headers = all_values[0]
-        rows = all_values[1:]
-
-        # Helpers
-        def get_col_idx(keywords):
-            for i, h in enumerate(headers):
-                h_clean = str(h).lower().strip()
-                for k in keywords:
-                    if k in h_clean: return i
-            return -1
-
-        def get_val(row, idx):
-            if idx != -1 and idx < len(row): return str(row[idx]).strip()
-            return ""
-
-        # Mapeo de Columnas
-        idx_foto = get_col_idx(["foto visualizar", "imagen de referencia"])
-        idx_dias = get_col_idx(["prioridad", "días restantes"])
-        idx_f_envio = get_col_idx(["fecha de envio"])
-        idx_f_entrega = get_col_idx(["fecha de entrega"])
-        
-        # Cliente
-        idx_cli_nom = get_col_idx(["nombre del cliente"])
-        idx_cli_emp = get_col_idx(["nombre de la empresa"])
-        idx_cli_rut = get_col_idx(["rut:"]) 
-        idx_cli_tel = get_col_idx(["telefono:"])
-        
-        # Detalles
-        idx_desc = get_col_idx(["descripción"])
-        idx_color = get_col_idx(["colores"])
-        idx_tipo = get_col_idx(["tipo de entrega"])
-        
-        # Factura
-        idx_req_fact = get_col_idx(["requiere factura"])
-        idx_razon = get_col_idx(["razón social"])
-        idx_rut_fac = get_col_idx(["rut facturación"])
-        idx_giro = get_col_idx(["giro"])
-        idx_dir_fac = get_col_idx(["dirección facturación"])
-        idx_com_fac = get_col_idx(["comuna:\n"]) 
-        
-        # Envio
-        idx_env_dir = get_col_idx(["dirección de envio"])
-        idx_env_com = get_col_idx(["comuna/ciudad"])
-        idx_env_ref = get_col_idx(["referencia (opcional)", "referencia opcional"]) 
-        idx_recibe_nom = get_col_idx(["nombre de quien recibe"])
-        idx_recibe_tel = get_col_idx(["telefono de quien recibe"])
-
-        processed_rows = []
-
-        for row in rows:
-            if not any(row): continue
-
-            # Días
-            dias_raw = get_val(row, idx_dias)
-            try: dias_num = int(float(dias_raw)) if dias_raw else 999
-            except: dias_num = 999
-            
-            # Cliente
-            cliente_info = f"**{get_val(row, idx_cli_nom)}**\n\n🏢 {get_val(row, idx_cli_emp)}\n\n🆔 {get_val(row, idx_cli_rut)}\n\n📞 {get_val(row, idx_cli_tel)}"
-            
-            # Factura
-            req = get_val(row, idx_req_fact).lower()
-            if "si" in req:
-                fact_info = f"✅ **SI**\n\nRaz: {get_val(row, idx_razon)}\n\nRUT: {get_val(row, idx_rut_fac)}\n\nGiro: {get_val(row, idx_giro)}\n\nDir: {get_val(row, idx_dir_fac)}"
-            else:
-                fact_info = "❌ No requiere"
-            
-            # Envío
-            ref_txt = get_val(row, idx_env_ref)
-            if "http" in ref_txt: ref_txt = "" 
-            envio_info = f"📍 {get_val(row, idx_env_dir)}\n\nCity: {get_val(row, idx_env_com)}\n\nRef: {ref_txt}\n\nRecibe: {get_val(row, idx_recibe_nom)} ({get_val(row, idx_recibe_tel)})"
-
-            processed_rows.append({
-                "sort": dias_num,
-                "url": get_val(row, idx_foto),
-                "dias": dias_num,
-                "f_envio": get_val(row, idx_f_envio),
-                "f_entrega": get_val(row, idx_f_entrega),
-                "cliente": cliente_info,
-                "desc": get_val(row, idx_desc),
-                "colores": get_val(row, idx_color),
-                "factura": fact_info,
-                "envio": envio_info,
-                "tipo": get_val(row, idx_tipo)
-            })
-
-        processed_rows.sort(key=lambda x: x["sort"])
-        return processed_rows
-
-    except Exception as e:
-        st.error(f"Error procesando datos: {e}")
-        return []
-
-@st.cache_data(show_spinner=False)
-def get_image(url, _drive_service):
-    """Descarga imagen de Drive (Cacheada)"""
-    if not url or "drive.google.com" not in str(url): return None
-    
-    match = re.search(r'id=([a-zA-Z0-9_-]+)', str(url))
-    if not match: match = re.search(r'/d/([a-zA-Z0-9_-]+)', str(url))
-    if not match: return None
-    file_id = match.group(1)
-
-    try:
-        request = _drive_service.files().get_media(fileId=file_id)
-        fh = io.BytesIO()
-        downloader = MediaIoBaseDownload(fh, request)
-        done = False
-        while done is False: status, done = downloader.next_chunk()
-        fh.seek(0)
-        return Image.open(fh)
-    except Exception:
-        return None
-
-# ================= APP MAIN =================
 def main():
-    if not check_login():
-        return
+    if not check_login(): return
 
-    # Sidebar
     with st.sidebar:
         st.write(f"Usuario: **{USER_LOGIN}**")
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False
             st.rerun()
-        st.success("🟢 Sistema Activo")
         st.caption(f"Refresco: {REFRESH_SECONDS}s")
 
-    # Header
-    c_head1, c_head2, c_head3 = st.columns([3, 1, 1])
-    c_head1.title("🚴 Tablero Cicla 3D")
+    c1, c2, c3 = st.columns([3, 1, 1])
+    c1.title("🚴 Tablero Cicla 3D")
     
-    # Conexión
-    gc, drive_service = connect_google()
-    if not gc: return
+    # Conectamos
+    gc, ds = connect_google()
+    
+    # Si la conexión falla, paramos aquí
+    if not gc:
+        st.warning("No se pudo establecer conexión con Google Sheets.")
+        return
 
-    # Carga Datos
     rows = load_data(gc)
-    
-    # Métricas
-    c_head2.metric("Pedidos Pendientes", len(rows))
-    
-    # Hora de actualización
-    hora_actual = datetime.now().strftime('%H:%M:%S')
-    c_head3.metric("Última Actualización", hora_actual)
-
+    c2.metric("Pedidos", len(rows))
+    c3.metric("Última Act.", datetime.now().strftime('%H:%M:%S'))
     st.markdown("---")
 
-    # Encabezados Tabla
-    cols_config = [1.2, 0.6, 0.8, 0.8, 1.5, 1.5, 1.5, 1.5, 0.8]
+    cols = [1.2, 0.6, 0.8, 0.8, 1.5, 1.5, 1.5, 1.5, 0.8]
     titulos = ["📸 FOTO", "DÍAS", "ENVÍO", "ENTREGA", "CLIENTE", "DETALLE", "ENVÍO", "FACTURA", "TIPO"]
-    
-    h_cols = st.columns(cols_config)
-    for c, t in zip(h_cols, titulos):
-        c.markdown(f"**{t}**")
-    
+    for c, t in zip(st.columns(cols), titulos): c.markdown(f"**{t}**")
     st.markdown("---")
 
-    # Renderizado de filas
-    if not rows:
-        st.info("No hay pedidos activos por ahora. ¡Buen trabajo!")
-
-    for row in rows:
+    for r in rows:
         with st.container():
-            c1, c2, c3, c4, c5, c6, c7, c8, c9 = st.columns(cols_config)
+            cc = st.columns(cols)
+            img = get_image(r['url'], ds)
+            if img: cc[0].image(img, use_container_width=True)
+            else: cc[0].text("Sin foto")
             
-            # Foto
-            img = get_image(row['url'], drive_service)
-            if img:
-                c1.image(img, use_container_width=True)
-            else:
-                c1.text("Sin foto")
-            
-            # Días
-            color = "red" if row['dias'] <= 2 else "green"
-            c2.markdown(f"<h2 style='color: {color}; margin:0; padding:0;'>{row['dias']}</h2>", unsafe_allow_html=True)
-            
-            # Resto
-            c3.write(row['f_envio'])
-            c4.write(row['f_entrega'])
-            c5.markdown(row['cliente'])
-            
-            c6.markdown(f"**Desc:** {row['desc']}")
-            c6.info(f"🎨 {row['colores']}")
-            
-            c7.markdown(row['envio'])
-            c8.markdown(row['factura'])
-            
-            if "Retiro" in row['tipo']:
-                c9.success(row['tipo'])
-            else:
-                c9.warning(row['tipo'])
-            
+            col = "red" if r['dias'] <= 2 else "green"
+            cc[1].markdown(f"<h2 style='color:{col};margin:0;'>{r['dias']}</h2>", unsafe_allow_html=True)
+            cc[2].write(r['f1'])
+            cc[3].write(r['f2'])
+            cc[4].markdown(r['cli'])
+            cc[5].markdown(f"**Desc:** {r['desc']}\n\n🎨 {r['col']}")
+            cc[6].markdown(r['env'])
+            cc[7].markdown(r['fact'])
+            if "Retiro" in r['tipo']: cc[8].success(r['tipo'])
+            else: cc[8].warning(r['tipo'])
             st.markdown("---")
 
-    # Bucle de refresco
     time.sleep(REFRESH_SECONDS)
     st.rerun()
 
