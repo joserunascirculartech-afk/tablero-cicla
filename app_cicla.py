@@ -10,35 +10,36 @@ import time
 import os
 from datetime import datetime
 
-# ================= 1. CONFIGURACIÓN (Debe ir al principio) =================
+# ================= 1. CONFIGURACIÓN =================
+# Esta linea SIEMPRE debe ser la primera
 st.set_page_config(page_title="Cicla 3D - Pedidos", page_icon="🚴", layout="wide")
 
-# RUTA LOCAL (Solo se usa si falla la nube)
+# RUTA LOCAL (Solo se usa si estás en tu Mac)
 JSON_FILE_LOCAL = '/Users/jdg_music_/Desktop/Cicla Proyect/service_account.json'
 
 # IDs de tu Google Sheet
 SHEET_ID = '1oeN-Iqrlc2hUuRhYDdrqqd7eez9wwPgGNbgAGi9CUVs'
 WORKSHEET_NAME = 'Respuestas de formulario 1'
 
-# Credenciales de Login de la App
+# Credenciales de Login
 USER_LOGIN = "Cicla3D"
 PASS_LOGIN = "Cicla:D"
 REFRESH_SECONDS = 5
 
-# ================= 2. CONEXIÓN INTELIGENTE (GOOGLE SHEETS) =================
+# ================= 2. CONEXIÓN (EL ARREGLO IMPORTANTE) =================
 @st.cache_resource
 def connect_google():
     """Conecta usando Secrets (Nube) o Archivo (Local)"""
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     creds = None
 
-    # INTENTO 1: Buscar en Secrets de Streamlit (Nube)
+    # --- INTENTO 1: NUBE (Secrets) ---
     if "gcp_service_account" in st.secrets:
         try:
-            # Convertimos los secrets a un diccionario normal
+            # Leemos los datos de la nube
             creds_dict = dict(st.secrets["gcp_service_account"])
 
-            # 🛠️ CORRECCIÓN VITAL: Arreglar saltos de línea en la clave privada
+            # 🛠️ CORRECCIÓN CLAVE: Arreglar los saltos de línea de la clave privada
             if "private_key" in creds_dict:
                 creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
 
@@ -46,19 +47,20 @@ def connect_google():
         except Exception as e:
             st.error(f"⚠️ Error leyendo secrets: {e}")
 
-    # INTENTO 2: Buscar archivo local (Tu Mac)
+    # --- INTENTO 2: LOCAL (Tu Mac) ---
+    # Si falló lo de arriba o no hay secrets, buscamos el archivo en tu escritorio
     if not creds and os.path.exists(JSON_FILE_LOCAL):
         try:
             creds = Credentials.from_service_account_file(JSON_FILE_LOCAL, scopes=scopes)
         except Exception as e:
             st.error(f"⚠️ Error leyendo archivo local: {e}")
 
-    # Si fallan los dos intentos
+    # --- VERIFICACIÓN FINAL ---
     if not creds:
-        st.error("❌ No se pudo conectar. Verifica los Secrets en Streamlit Cloud o el archivo json en local.")
+        st.error("❌ ERROR CRÍTICO: No se encontraron credenciales. \n\n1. Si estás en la Nube: Revisa que los 'Secrets' tengan el título [gcp_service_account].\n2. Si estás en Local: Revisa la ruta del archivo json.")
         return None, None
 
-    # Si tenemos credenciales, conectamos
+    # Conectamos a Google
     try:
         gc = gspread.authorize(creds)
         drive_service = build('drive', 'v3', credentials=creds)
@@ -67,8 +69,8 @@ def connect_google():
         st.error(f"❌ Error autenticando con Google: {e}")
         return None, None
 
-# ================= 3. LÓGICA DE DATOS =================
-@st.cache_data(ttl=REFRESH_SECONDS) 
+# ================= 3. PROCESAMIENTO DE DATOS =================
+@st.cache_data(ttl=REFRESH_SECONDS)
 def load_data(_gc):
     if _gc is None: return []
     try:
@@ -87,7 +89,7 @@ def load_data(_gc):
         def get_val(row, idx):
             return str(row[idx]).strip() if idx != -1 and idx < len(row) else ""
 
-        # Mapeo de columnas
+        # Índices de columnas
         idx_foto = get_col_idx(["foto visualizar", "imagen de referencia"])
         idx_dias = get_col_idx(["prioridad", "días restantes"])
         idx_f_env = get_col_idx(["fecha de envio"])
@@ -154,7 +156,7 @@ def get_image(url, _drive_service):
         return Image.open(fh)
     except: return None
 
-# ================= 4. INTERFAZ =================
+# ================= 4. INTERFAZ PRINCIPAL =================
 def check_login():
     if 'logged_in' not in st.session_state:
         st.session_state['logged_in'] = False
@@ -189,19 +191,19 @@ def main():
     c1, c2, c3 = st.columns([3, 1, 1])
     c1.title("🚴 Tablero Cicla 3D")
     
-    # Conectamos
+    # --- CONECTAR ---
     gc, ds = connect_google()
     
-    # Si la conexión falla, paramos aquí
-    if not gc:
-        st.warning("No se pudo establecer conexión con Google Sheets.")
-        return
+    # Si falló la conexión, paramos
+    if not gc: return
 
+    # --- CARGAR DATOS ---
     rows = load_data(gc)
     c2.metric("Pedidos", len(rows))
     c3.metric("Última Act.", datetime.now().strftime('%H:%M:%S'))
     st.markdown("---")
 
+    # --- MOSTRAR TABLA ---
     cols = [1.2, 0.6, 0.8, 0.8, 1.5, 1.5, 1.5, 1.5, 0.8]
     titulos = ["📸 FOTO", "DÍAS", "ENVÍO", "ENTREGA", "CLIENTE", "DETALLE", "ENVÍO", "FACTURA", "TIPO"]
     for c, t in zip(st.columns(cols), titulos): c.markdown(f"**{t}**")
