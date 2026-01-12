@@ -262,18 +262,21 @@ def render_card(r, ds, gc, es_finalizado=False):
         fc1.caption(f"Envío:\n**{r['f_envio']}**")
         fc2.caption(f"Entrega:\n**{r['f_entrega']}**")
 
-        # --- PESTAÑAS DETALLES (Corregido) ---
+        # --- PESTAÑAS DETALLES (ESTRUCTURA FIJA) ---
         with st.expander("📍 Ver Dirección"):
             st.caption(f"{r['env_dir']}\n{r['env_com']}\nRec: {r['env_rec']}")
 
-        if r['req_fact']:
-            with st.expander("🧾 Datos Facturación"):
+        # Renderizar SIEMPRE el bloque de factura, tenga datos o no
+        with st.expander("🧾 Datos Facturación"):
+            if r['req_fact']:
                 st.caption(r['fact_det'])
+            else:
+                st.caption("❌ No solicitada / Boleta")
         
-        # Espaciador
+        # Espaciador final
         st.write("") 
         
-        # --- BOTÓN ---
+        # --- BOTÓN DE ACCIÓN ---
         if not es_finalizado:
             if st.button("✅ Finalizar", key=f"btn_fin_{r['row_excel']}", use_container_width=True, type="primary"):
                 with st.spinner("..."):
@@ -336,6 +339,6 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
+   
+  
  
