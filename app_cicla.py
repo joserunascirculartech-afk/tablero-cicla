@@ -4,14 +4,18 @@ from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 import io
-from PIL import Image
+from PIL import Image, ImageOps # Agregamos ImageOps para el recorte
 import re
 import time
 import os
 from datetime import datetime
 
 # ================= 1. CONFIGURACIÓN =================
-st.set_page_config(page_title="Cicla 3D - Pedidos", layout="wide")
+st.set_page_config(
+    page_title="Cicla 3D - Tablero", 
+    layout="wide", 
+    initial_sidebar_state="collapsed"
+)
 
 # --- SOPORTE IPHONE (HEIC) ---
 HEIC_SUPPORT = False
@@ -22,16 +26,19 @@ try:
 except ImportError:
     pass
 
-# RUTA LOCAL (Solo se usa si lo corres en tu Mac)
+# RUTA LOCAL (Ajusta si cambias de PC)
 JSON_FILE_LOCAL = '/Users/jdg_music_/Desktop/Cicla Proyect/service_account.json'
+
+# IDs de Google Sheets
 SHEET_ID = '1oeN-Iqrlc2hUuRhYDdrqqd7eez9wwPgGNbgAGi9CUVs'
 WORKSHEET_NAME = 'Respuestas de formulario 1'
 COL_ESTADO_NUM = 26
 COL_ESTADO_IDX = 25
 
+# Credenciales
 USER_LOGIN = "Cicla3D"
 PASS_LOGIN = "Cicla:D"
-REFRESH_SECONDS = 5
+REFRESH_SECONDS = 15
 
 # ================= 2. CONEXIÓN =================
 @st.cache_resource
@@ -39,7 +46,7 @@ def connect_google():
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     creds = None
     
-    # Intento 1: Secrets (Nube)
+    # Intento 1: Secrets (Streamlit Cloud)
     try:
         if "gcp_service_account" in st.secrets:
             creds_dict = dict(st.secrets["gcp_service_account"])
@@ -49,7 +56,7 @@ def connect_google():
     except Exception:
         pass
 
-    # Intento 2: Local (Mac)
+    # Intento 2: Archivo Local
     if creds is None and os.path.exists(JSON_FILE_LOCAL):
         try: 
             creds = Credentials.from_service_account_file(JSON_FILE_LOCAL, scopes=scopes)
@@ -57,7 +64,7 @@ def connect_google():
             pass
 
     if not creds:
-        st.error("❌ ERROR: No hay credenciales.")
+        st.error("❌ ERROR: No se encontraron las credenciales.")
         return None, None
 
     try:
@@ -65,7 +72,7 @@ def connect_google():
         drive_service = build('drive', 'v3', credentials=creds)
         return gc, drive_service
     except Exception as e:
-        st.error(f"❌ Error conexión: {e}")
+        st.error(f"❌ Error de conexión: {e}")
         return None, None
 
 # ================= 3. LÓGICA DE DATOS =================
@@ -115,32 +122,34 @@ def load_data(_gc):
         for i, row in enumerate(rows):
             if not any(row): continue
             
-            # Recuperamos el estado
             estado_actual = get_val(row, COL_ESTADO_IDX).lower()
-
+            
             d_raw = get_val(row, idx_dias)
             try:
                 if d_raw: dias = int(float(d_raw))
                 else: dias = 999
             except: dias = 999
             
-            cli_txt = f"**{get_val(row, idx_cli_nom)}**\n\n🏢 {get_val(row, idx_cli_emp)}\n\n🆔 {get_val(row, idx_cli_rut)}\n\n📞 {get_val(row, idx_cli_tel)}"
-            
-            fact_txt = "❌ No"
-            if "si" in get_val(row, idx_req).lower():
-                fact_txt = f"✅ **SI**\n\nRaz: {get_val(row, idx_razon)}\n\nRUT: {get_val(row, idx_rut_fac)}\n\nGiro: {get_val(row, idx_giro)}\n\nDir: {get_val(row, idx_dir_fac)}"
-
-            ref = get_val(row, idx_env_ref)
-            if "http" in ref: ref = ""
-            env_txt = f"📍 {get_val(row, idx_env_dir)}\n\nCity: {get_val(row, idx_env_com)}\n\nRef: {ref}\n\nRec: {get_val(row, idx_rec_nom)} ({get_val(row, idx_rec_tel)})"
-
             processed.append({
                 "row_excel": i + 2,
                 "estado": estado_actual,
-                "sort": dias, "url": get_val(row, idx_foto), "dias": dias,
-                "f1": get_val(row, idx_f_env), "f2": get_val(row, idx_f_ent),
-                "cli": cli_txt, "desc": get_val(row, idx_desc), "col": get_val(row, idx_color),
-                "fact": fact_txt, "env": env_txt, "tipo": get_val(row, idx_tipo)
+                "sort": dias, 
+                "url": get_val(row, idx_foto), 
+                "dias": dias,
+                "f_envio": get_val(row, idx_f_env), 
+                "f_entrega": get_val(row, idx_f_ent),
+                "cli_nom": get_val(row, idx_cli_nom),
+                "cli_emp": get_val(row, idx_cli_emp),
+                "cli_rut": get_val(row, idx_cli_rut),
+                "cli_tel": get_val(row, idx_cli_tel),
+                "desc": get_val(row, idx_desc), 
+                "colores": get_val(row, idx_color),
+                "req_fact": "si" in get_val(row, idx_req).lower(),
+                "fact_det": f"Raz: {get_val(row, idx_razon)}\nRUT: {get_val(row, idx_rut_fac)}\nDir: {get_val(row, idx_dir_fac)}",
+                "env_dir": get_val(row, idx_env_dir),
+                "env_com": get_val(row, idx_env_com),
+                "env_rec": f"{get_val(row, idx_rec_nom)} ({get_val(row, idx_rec_tel)})",
+                "tipo": get_val(row, idx_tipo)
             })
 
         return sorted(processed, key=lambda x: x["sort"])
@@ -150,7 +159,10 @@ def load_data(_gc):
 
 @st.cache_data(show_spinner=False)
 def get_image(url, _drive_service):
+    """Descarga y normaliza el tamaño de la imagen (Crop 300x200)"""
     if not url or "drive.google.com" not in str(url): return None
+    
+    # Extraer ID
     match = re.search(r'(?:id=|/d/)([a-zA-Z0-9_-]+)', str(url))
     if not match: return None
     
@@ -163,11 +175,15 @@ def get_image(url, _drive_service):
         
         img = Image.open(fh)
         img = img.convert("RGB") 
+
+        # --- AQUÍ LA MAGIA: RECORTE AUTOMÁTICO PARA QUE TODAS MIDAN LO MISMO ---
+        # Tamaño fijo: (Ancho, Alto) -> Puedes ajustar esto si quieres las fotos más altas
+        TARGET_SIZE = (400, 250) 
+        img = ImageOps.fit(img, TARGET_SIZE, method=Image.Resampling.LANCZOS)
         
         img_byte_arr = io.BytesIO()
-        img.save(img_byte_arr, format='JPEG')
+        img.save(img_byte_arr, format='JPEG', quality=85)
         return img_byte_arr.getvalue()
-                
     except Exception as e:
         return None
 
@@ -182,7 +198,8 @@ def cambiar_estado(gc, row_num, nuevo_estado):
         st.error(f"Error al guardar: {e}")
         return False
 
-# ================= 4. MAIN =================
+# ================= 4. INTERFAZ GRÁFICA =================
+
 def check_login():
     if 'logged_in' not in st.session_state:
         st.session_state['logged_in'] = False
@@ -190,12 +207,12 @@ def check_login():
     if not st.session_state['logged_in']:
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            st.title("🔐 Acceso Cicla 3D")
+            st.title("🔐 Login Cicla 3D")
             st.markdown("---")
             username = st.text_input("Usuario")
             password = st.text_input("Contraseña", type="password")
             
-            if st.button("Iniciar Sesión", type="primary"):
+            if st.button("Ingresar", type="primary"):
                 if username == USER_LOGIN and password == PASS_LOGIN:
                     st.session_state['logged_in'] = True
                     st.rerun()
@@ -204,84 +221,122 @@ def check_login():
         return False
     return True
 
-def render_row(r, ds, gc, es_finalizado=False):
-    cols_width = [1.2, 0.6, 0.8, 0.8, 1.5, 1.5, 1.5, 1.5, 0.8, 0.6]
-    cc = st.columns(cols_width)
-    
-    img_bytes = get_image(r['url'], ds)
-    if img_bytes: cc[0].image(img_bytes, use_container_width=True)
-    elif r['url']: cc[0].warning("⚠️ Error")
-    else: cc[0].text("Sin foto")
-    
-    col_dias = "red" if r['dias'] <= 2 else "green"
-    cc[1].markdown(f"<h2 style='color:{col_dias};margin:0;'>{r['dias']}</h2>", unsafe_allow_html=True)
-    cc[2].write(r['f1'])
-    cc[3].write(r['f2'])
-    cc[4].markdown(r['cli'])
-    cc[5].markdown(f"**Desc:** {r['desc']}\n\n🎨 {r['col']}")
-    cc[6].markdown(r['env'])
-    cc[7].markdown(r['fact'])
-    
-    if "Retiro" in r['tipo']: cc[8].success(r['tipo'])
-    else: cc[8].warning(r['tipo'])
+def render_card(r, ds, gc, es_finalizado=False):
+    with st.container(border=True):
+        # --- CABECERA (Siempre 1 línea) ---
+        c1, c2 = st.columns([1, 1])
+        if not es_finalizado:
+            color = "red" if r['dias'] <= 2 else "orange" if r['dias'] <= 5 else "green"
+            c1.markdown(f"<h4 style='color:{color}; margin:0;'>📅 {r['dias']} días</h4>", unsafe_allow_html=True)
+        else:
+            c1.markdown("✅ **LISTO**")
+        
+        # Icono tipo
+        tipo_icon = "🏃" if "retiro" in r['tipo'].lower() else "🚚"
+        c2.write(f"{tipo_icon} {r['tipo'][:8]}") # Cortamos texto largo de tipo
 
-    if not es_finalizado:
-        if cc[9].button("✅", key=f"fin_{r['row_excel']}", help="Finalizar"):
-            with st.spinner("Finalizando..."):
-                if cambiar_estado(gc, r['row_excel'], "Finalizado"):
-                    st.success("!")
-                    time.sleep(0.5)
-                    st.rerun()
-    else:
-        if cc[9].button("↩️", key=f"rev_{r['row_excel']}", help="Recuperar"):
-            with st.spinner("Recuperando..."):
-                if cambiar_estado(gc, r['row_excel'], ""): 
-                    st.success("!")
-                    time.sleep(0.5)
-                    st.rerun()
-    
-    st.markdown("---")
+        st.markdown("---")
+        
+        # --- IMAGEN NORMALIZADA ---
+        img_bytes = get_image(r['url'], ds)
+        if img_bytes:
+            st.image(img_bytes, use_container_width=True)
+        else:
+            # Placeholder gris del mismo tamaño que la imagen recortada (aprox)
+            st.markdown(
+                "<div style='height: 150px; background-color: #f0f2f6; display: flex; align-items: center; justify-content: center; color: #888; border-radius: 5px;'>Sin Imagen</div>", 
+                unsafe_allow_html=True
+            )
+
+        # --- INFORMACIÓN (Textos truncados) ---
+        # Cliente
+        cliente_corto = r['cli_nom'][:20] + "..." if len(r['cli_nom']) > 20 else r['cli_nom']
+        st.caption(f"👤 {cliente_corto}")
+        
+        # Descripción (Máximo 2 líneas aprox)
+        desc_text = r['desc']
+        if len(desc_text) > 40:
+            desc_text = desc_text[:37] + "..."
+        st.markdown(f"**Pedido:** {desc_text}")
+        
+        # Colores (Truncado)
+        colores_corto = r['colores'][:25] + "..." if len(r['colores']) > 25 else r['colores']
+        st.markdown(f"🎨 {colores_corto}")
+        
+        # --- FECHAS ---
+        st.divider()
+        fc1, fc2 = st.columns(2)
+        fc1.caption(f"Envío:\n**{r['f_envio']}**")
+        fc2.caption(f"Entrega:\n**{r['f_entrega']}**")
+
+        # --- DETALLES ---
+        # Usamos expanders vacíos si no hay datos para que no descuadre visualmente (opcional, aquí los oculto si no hay)
+        with st.expander("📍 Ver Dirección"):
+            st.caption(f"{r['env_dir']}\n{r['env_com']}\nRec: {r['env_rec']}")
+
+        # Espaciador vertical para alinear botones al fondo
+        st.write("") 
+        
+        # --- BOTÓN DE ACCIÓN ---
+        if not es_finalizado:
+            if st.button("✅ Finalizar", key=f"btn_fin_{r['row_excel']}", use_container_width=True, type="primary"):
+                with st.spinner("..."):
+                    if cambiar_estado(gc, r['row_excel'], "Finalizado"):
+                        time.sleep(1)
+                        st.rerun()
+        else:
+            if st.button("↩️ Recuperar", key=f"btn_rec_{r['row_excel']}", use_container_width=True):
+                with st.spinner("..."):
+                    if cambiar_estado(gc, r['row_excel'], ""):
+                        st.rerun()
 
 def main():
     if not check_login(): return
 
     with st.sidebar:
-        st.write(f"Usuario: **{USER_LOGIN}**")
+        st.header(f"Hola, {USER_LOGIN}")
         if st.button("Cerrar Sesión"):
             st.session_state['logged_in'] = False
             st.rerun()
-        st.caption(f"Refresco: {REFRESH_SECONDS}s")
-        if HEIC_SUPPORT: st.success("✅ Soporte iPhone")
-        else: st.warning("⚠️ Sin soporte iPhone")
+        st.caption(f"Refresh: {REFRESH_SECONDS}s")
+        if HEIC_SUPPORT: st.success("iPhone: ON")
 
-    st.title("Tablero Cicla 3D")
+    st.title("Tablero de Pedidos")
     
     gc, ds = connect_google()
     if not gc: return
 
     all_rows = load_data(gc)
+    
     pendientes = [r for r in all_rows if "finalizado" not in r['estado']]
     finalizados = [r for r in all_rows if "finalizado" in r['estado']]
     
-    tab1, tab2 = st.tabs([f"Pendientes ({len(pendientes)})", f"✅ Finalizados ({len(finalizados)})"])
+    tab1, tab2 = st.tabs([f"📌 Pendientes ({len(pendientes)})", f"✅ Historial ({len(finalizados)})"])
 
-    titulos = ["📸 FOTO", "DÍAS", "ENVÍO", "ENTREGA", "CLIENTE", "DETALLE", "ENVÍO", "FACTURA", "TIPO", "ACCIÓN"]
-    cols_titulos = [1.2, 0.6, 0.8, 0.8, 1.5, 1.5, 1.5, 1.5, 0.8, 0.6]
+    # CONFIGURACIÓN DE GRILLA
+    COLS_POR_FILA = 4 
 
+    # --- PESTAÑA PENDIENTES ---
     with tab1:
-        st.markdown("---")
-        for c, t in zip(st.columns(cols_titulos), titulos): c.markdown(f"**{t}**")
-        st.markdown("---")
-        for r in pendientes:
-            render_row(r, ds, gc, es_finalizado=False)
+        if not pendientes:
+            st.success("🎉 ¡Todo al día! No hay pedidos pendientes.")
+        else:
+            cols = st.columns(COLS_POR_FILA)
+            for i, r in enumerate(pendientes):
+                col_actual = cols[i % COLS_POR_FILA]
+                with col_actual:
+                    render_card(r, ds, gc, es_finalizado=False)
 
+    # --- PESTAÑA FINALIZADOS ---
     with tab2:
-        st.info("Historial de pedidos entregados.")
-        st.markdown("---")
-        for c, t in zip(st.columns(cols_titulos), titulos): c.markdown(f"**{t}**")
-        st.markdown("---")
-        for r in finalizados:
-            render_row(r, ds, gc, es_finalizado=True)
+        if not finalizados:
+            st.info("No hay historial.")
+        else:
+            cols = st.columns(COLS_POR_FILA)
+            for i, r in enumerate(finalizados):
+                col_actual = cols[i % COLS_POR_FILA]
+                with col_actual:
+                    render_card(r, ds, gc, es_finalizado=True)
 
     time.sleep(REFRESH_SECONDS)
     st.rerun()
