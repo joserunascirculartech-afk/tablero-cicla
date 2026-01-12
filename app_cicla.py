@@ -4,7 +4,7 @@ from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 import io
-from PIL import Image, ImageOps # Agregamos ImageOps para el recorte
+from PIL import Image, ImageOps
 import re
 import time
 import os
@@ -159,10 +159,9 @@ def load_data(_gc):
 
 @st.cache_data(show_spinner=False)
 def get_image(url, _drive_service):
-    """Descarga y normaliza el tamaño de la imagen (Crop 300x200)"""
+    """Descarga y normaliza el tamaño de la imagen (Crop 400x250)"""
     if not url or "drive.google.com" not in str(url): return None
     
-    # Extraer ID
     match = re.search(r'(?:id=|/d/)([a-zA-Z0-9_-]+)', str(url))
     if not match: return None
     
@@ -176,8 +175,7 @@ def get_image(url, _drive_service):
         img = Image.open(fh)
         img = img.convert("RGB") 
 
-        # --- AQUÍ LA MAGIA: RECORTE AUTOMÁTICO PARA QUE TODAS MIDAN LO MISMO ---
-        # Tamaño fijo: (Ancho, Alto) -> Puedes ajustar esto si quieres las fotos más altas
+        # Recorte Automático
         TARGET_SIZE = (400, 250) 
         img = ImageOps.fit(img, TARGET_SIZE, method=Image.Resampling.LANCZOS)
         
@@ -223,7 +221,7 @@ def check_login():
 
 def render_card(r, ds, gc, es_finalizado=False):
     with st.container(border=True):
-        # --- CABECERA (Siempre 1 línea) ---
+        # --- CABECERA ---
         c1, c2 = st.columns([1, 1])
         if not es_finalizado:
             color = "red" if r['dias'] <= 2 else "orange" if r['dias'] <= 5 else "green"
@@ -231,9 +229,8 @@ def render_card(r, ds, gc, es_finalizado=False):
         else:
             c1.markdown("✅ **LISTO**")
         
-        # Icono tipo
         tipo_icon = "🏃" if "retiro" in r['tipo'].lower() else "🚚"
-        c2.write(f"{tipo_icon} {r['tipo'][:8]}") # Cortamos texto largo de tipo
+        c2.write(f"{tipo_icon} {r['tipo'][:8]}")
 
         st.markdown("---")
         
@@ -242,24 +239,20 @@ def render_card(r, ds, gc, es_finalizado=False):
         if img_bytes:
             st.image(img_bytes, use_container_width=True)
         else:
-            # Placeholder gris del mismo tamaño que la imagen recortada (aprox)
             st.markdown(
                 "<div style='height: 150px; background-color: #f0f2f6; display: flex; align-items: center; justify-content: center; color: #888; border-radius: 5px;'>Sin Imagen</div>", 
                 unsafe_allow_html=True
             )
 
-        # --- INFORMACIÓN (Textos truncados) ---
-        # Cliente
+        # --- INFORMACIÓN ---
         cliente_corto = r['cli_nom'][:20] + "..." if len(r['cli_nom']) > 20 else r['cli_nom']
         st.caption(f"👤 {cliente_corto}")
         
-        # Descripción (Máximo 2 líneas aprox)
         desc_text = r['desc']
         if len(desc_text) > 40:
             desc_text = desc_text[:37] + "..."
         st.markdown(f"**Pedido:** {desc_text}")
         
-        # Colores (Truncado)
         colores_corto = r['colores'][:25] + "..." if len(r['colores']) > 25 else r['colores']
         st.markdown(f"🎨 {colores_corto}")
         
@@ -269,15 +262,18 @@ def render_card(r, ds, gc, es_finalizado=False):
         fc1.caption(f"Envío:\n**{r['f_envio']}**")
         fc2.caption(f"Entrega:\n**{r['f_entrega']}**")
 
-        # --- DETALLES ---
-        # Usamos expanders vacíos si no hay datos para que no descuadre visualmente (opcional, aquí los oculto si no hay)
+        # --- PESTAÑAS DETALLES (Corregido) ---
         with st.expander("📍 Ver Dirección"):
             st.caption(f"{r['env_dir']}\n{r['env_com']}\nRec: {r['env_rec']}")
 
-        # Espaciador vertical para alinear botones al fondo
+        if r['req_fact']:
+            with st.expander("🧾 Datos Facturación"):
+                st.caption(r['fact_det'])
+        
+        # Espaciador
         st.write("") 
         
-        # --- BOTÓN DE ACCIÓN ---
+        # --- BOTÓN ---
         if not es_finalizado:
             if st.button("✅ Finalizar", key=f"btn_fin_{r['row_excel']}", use_container_width=True, type="primary"):
                 with st.spinner("..."):
@@ -301,7 +297,7 @@ def main():
         st.caption(f"Refresh: {REFRESH_SECONDS}s")
         if HEIC_SUPPORT: st.success("iPhone: ON")
 
-    st.title("Tablero de Pedidos")
+    st.title("🚴 Tablero de Pedidos")
     
     gc, ds = connect_google()
     if not gc: return
@@ -313,10 +309,8 @@ def main():
     
     tab1, tab2 = st.tabs([f"📌 Pendientes ({len(pendientes)})", f"✅ Historial ({len(finalizados)})"])
 
-    # CONFIGURACIÓN DE GRILLA
     COLS_POR_FILA = 4 
 
-    # --- PESTAÑA PENDIENTES ---
     with tab1:
         if not pendientes:
             st.success("🎉 ¡Todo al día! No hay pedidos pendientes.")
@@ -327,7 +321,6 @@ def main():
                 with col_actual:
                     render_card(r, ds, gc, es_finalizado=False)
 
-    # --- PESTAÑA FINALIZADOS ---
     with tab2:
         if not finalizados:
             st.info("No hay historial.")
@@ -343,3 +336,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+ 
