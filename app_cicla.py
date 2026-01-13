@@ -12,8 +12,8 @@ from datetime import datetime
 
 # ================= 1. CONFIGURACIÓN =================
 st.set_page_config(
-    page_title="Cicla 3D - Tablero", 
-    layout="wide", 
+    page_title="Cicla 3D - Tablero",
+    layout="wide",
     initial_sidebar_state="collapsed"
 )
 
@@ -45,7 +45,7 @@ REFRESH_SECONDS = 15
 def connect_google():
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     creds = None
-    
+
     # Intento 1: Secrets (Streamlit Cloud)
     try:
         if "gcp_service_account" in st.secrets:
@@ -58,9 +58,9 @@ def connect_google():
 
     # Intento 2: Archivo Local
     if creds is None and os.path.exists(JSON_FILE_LOCAL):
-        try: 
+        try:
             creds = Credentials.from_service_account_file(JSON_FILE_LOCAL, scopes=scopes)
-        except: 
+        except:
             pass
 
     if not creds:
@@ -78,18 +78,21 @@ def connect_google():
 # ================= 3. LÓGICA DE DATOS =================
 @st.cache_data(ttl=REFRESH_SECONDS)
 def load_data(_gc):
-    if _gc is None: return []
+    if _gc is None:
+        return []
     try:
         sh = _gc.open_by_key(SHEET_ID)
         ws = sh.worksheet(WORKSHEET_NAME)
         all_values = ws.get_all_values()
-        
-        if not all_values: return []
+
+        if not all_values:
+            return []
         headers, rows = all_values[0], all_values[1:]
 
         def get_col_idx(keywords):
             for i, h in enumerate(headers):
-                if any(k in str(h).lower().strip() for k in keywords): return i
+                if any(k in str(h).lower().strip() for k in keywords):
+                    return i
             return -1
 
         def get_val(row, idx):
@@ -102,7 +105,7 @@ def load_data(_gc):
         idx_f_ent = get_col_idx(["fecha de entrega"])
         idx_cli_nom = get_col_idx(["nombre del cliente"])
         idx_cli_emp = get_col_idx(["nombre de la empresa"])
-        idx_cli_rut = get_col_idx(["rut:"]) 
+        idx_cli_rut = get_col_idx(["rut:"])
         idx_cli_tel = get_col_idx(["telefono:"])
         idx_desc = get_col_idx(["descripción"])
         idx_color = get_col_idx(["colores"])
@@ -114,35 +117,39 @@ def load_data(_gc):
         idx_dir_fac = get_col_idx(["dirección facturación"])
         idx_env_dir = get_col_idx(["dirección de envio"])
         idx_env_com = get_col_idx(["comuna/ciudad"])
-        idx_env_ref = get_col_idx(["referencia (opcional)", "referencia opcional"]) 
+        idx_env_ref = get_col_idx(["referencia (opcional)", "referencia opcional"])
         idx_rec_nom = get_col_idx(["nombre de quien recibe"])
         idx_rec_tel = get_col_idx(["telefono de quien recibe"])
 
         processed = []
         for i, row in enumerate(rows):
-            if not any(row): continue
-            
+            if not any(row):
+                continue
+
             estado_actual = get_val(row, COL_ESTADO_IDX).lower()
-            
+
             d_raw = get_val(row, idx_dias)
             try:
-                if d_raw: dias = int(float(d_raw))
-                else: dias = 999
-            except: dias = 999
-            
+                if d_raw:
+                    dias = int(float(d_raw))
+                else:
+                    dias = 999
+            except:
+                dias = 999
+
             processed.append({
                 "row_excel": i + 2,
                 "estado": estado_actual,
-                "sort": dias, 
-                "url": get_val(row, idx_foto), 
+                "sort": dias,
+                "url": get_val(row, idx_foto),
                 "dias": dias,
-                "f_envio": get_val(row, idx_f_env), 
+                "f_envio": get_val(row, idx_f_env),
                 "f_entrega": get_val(row, idx_f_ent),
                 "cli_nom": get_val(row, idx_cli_nom),
                 "cli_emp": get_val(row, idx_cli_emp),
                 "cli_rut": get_val(row, idx_cli_rut),
                 "cli_tel": get_val(row, idx_cli_tel),
-                "desc": get_val(row, idx_desc), 
+                "desc": get_val(row, idx_desc),
                 "colores": get_val(row, idx_color),
                 "req_fact": "si" in get_val(row, idx_req).lower(),
                 "fact_det": f"Raz: {get_val(row, idx_razon)}\nRUT: {get_val(row, idx_rut_fac)}\nDir: {get_val(row, idx_dir_fac)}",
@@ -160,29 +167,32 @@ def load_data(_gc):
 @st.cache_data(show_spinner=False)
 def get_image(url, _drive_service):
     """Descarga y normaliza el tamaño de la imagen (Crop 400x250)"""
-    if not url or "drive.google.com" not in str(url): return None
-    
+    if not url or "drive.google.com" not in str(url):
+        return None
+
     match = re.search(r'(?:id=|/d/)([a-zA-Z0-9_-]+)', str(url))
-    if not match: return None
-    
+    if not match:
+        return None
+
     try:
         req = _drive_service.files().get_media(fileId=match.group(1))
         fh = io.BytesIO()
         dl = MediaIoBaseDownload(fh, req)
         done = False
-        while not done: _, done = dl.next_chunk()
-        
+        while not done:
+            _, done = dl.next_chunk()
+
         img = Image.open(fh)
-        img = img.convert("RGB") 
+        img = img.convert("RGB")
 
         # Recorte Automático
-        TARGET_SIZE = (400, 250) 
+        TARGET_SIZE = (400, 250)
         img = ImageOps.fit(img, TARGET_SIZE, method=Image.Resampling.LANCZOS)
-        
+
         img_byte_arr = io.BytesIO()
         img.save(img_byte_arr, format='JPEG', quality=85)
         return img_byte_arr.getvalue()
-    except Exception as e:
+    except Exception:
         return None
 
 def cambiar_estado(gc, row_num, nuevo_estado):
@@ -197,7 +207,6 @@ def cambiar_estado(gc, row_num, nuevo_estado):
         return False
 
 # ================= 4. INTERFAZ GRÁFICA =================
-
 def check_login():
     if 'logged_in' not in st.session_state:
         st.session_state['logged_in'] = False
@@ -209,7 +218,7 @@ def check_login():
             st.markdown("---")
             username = st.text_input("Usuario")
             password = st.text_input("Contraseña", type="password")
-            
+
             if st.button("Ingresar", type="primary"):
                 if username == USER_LOGIN and password == PASS_LOGIN:
                     st.session_state['logged_in'] = True
@@ -221,6 +230,26 @@ def check_login():
 
 def render_card(r, ds, gc, es_finalizado=False):
     with st.container(border=True):
+
+        # ---- CSS (alinear altura de cards) ----
+        # Lo inyecto aquí para que funcione aunque Streamlit re-renderice partes;
+        # si prefieres, puedes moverlo a main() para inyectarlo una sola vez.
+        st.markdown("""
+        <style>
+        .cicla-card{
+          min-height: 720px;           /* AJUSTA ESTO si quieres más/menos alto */
+          display:flex;
+          flex-direction:column;
+          justify-content:space-between;
+        }
+        .cicla-card-top{ flex:1; }
+        .cicla-card-actions{ margin-top:12px; }
+        </style>
+        """, unsafe_allow_html=True)
+
+        st.markdown("<div class='cicla-card'>", unsafe_allow_html=True)
+        st.markdown("<div class='cicla-card-top'>", unsafe_allow_html=True)
+
         # --- CABECERA ---
         c1, c2 = st.columns([1, 1])
         if not es_finalizado:
@@ -228,55 +257,55 @@ def render_card(r, ds, gc, es_finalizado=False):
             c1.markdown(f"<h4 style='color:{color}; margin:0;'>📅 {r['dias']} días</h4>", unsafe_allow_html=True)
         else:
             c1.markdown("✅ **LISTO**")
-        
+
         tipo_icon = "🏃" if "retiro" in r['tipo'].lower() else "🚚"
         c2.write(f"{tipo_icon} {r['tipo'][:8]}")
 
         st.markdown("---")
-        
+
         # --- IMAGEN NORMALIZADA ---
         img_bytes = get_image(r['url'], ds)
         if img_bytes:
             st.image(img_bytes, use_container_width=True)
         else:
+            # Mismo alto que la imagen (250px) para mantener uniformidad
             st.markdown(
-                "<div style='height: 150px; background-color: #f0f2f6; display: flex; align-items: center; justify-content: center; color: #888; border-radius: 5px;'>Sin Imagen</div>", 
+                "<div style='height: 250px; background-color: #f0f2f6; display: flex; align-items: center; justify-content: center; color: #888; border-radius: 5px;'>Sin Imagen</div>",
                 unsafe_allow_html=True
             )
 
         # --- INFORMACIÓN ---
         cliente_corto = r['cli_nom'][:20] + "..." if len(r['cli_nom']) > 20 else r['cli_nom']
         st.caption(f"👤 {cliente_corto}")
-        
+
         desc_text = r['desc']
         if len(desc_text) > 40:
             desc_text = desc_text[:37] + "..."
         st.markdown(f"**Pedido:** {desc_text}")
-        
+
         colores_corto = r['colores'][:25] + "..." if len(r['colores']) > 25 else r['colores']
         st.markdown(f"🎨 {colores_corto}")
-        
+
         # --- FECHAS ---
         st.divider()
         fc1, fc2 = st.columns(2)
         fc1.caption(f"Envío:\n**{r['f_envio']}**")
         fc2.caption(f"Entrega:\n**{r['f_entrega']}**")
 
-        # --- PESTAÑAS DETALLES (ESTRUCTURA FIJA) ---
+        # --- PESTAÑAS DETALLES ---
         with st.expander("📍 Ver Dirección"):
             st.caption(f"{r['env_dir']}\n{r['env_com']}\nRec: {r['env_rec']}")
 
-        # Renderizar SIEMPRE el bloque de factura, tenga datos o no
         with st.expander("🧾 Datos Facturación"):
             if r['req_fact']:
                 st.caption(r['fact_det'])
             else:
                 st.caption("❌ No solicitada / Boleta")
-        
-        # Espaciador final
-        st.write("") 
-        
-        # --- BOTÓN DE ACCIÓN ---
+
+        st.markdown("</div>", unsafe_allow_html=True)  # cierre cicla-card-top
+
+        # --- BOTÓN DE ACCIÓN (siempre abajo) ---
+        st.markdown("<div class='cicla-card-actions'>", unsafe_allow_html=True)
         if not es_finalizado:
             if st.button("✅ Finalizar", key=f"btn_fin_{r['row_excel']}", use_container_width=True, type="primary"):
                 with st.spinner("..."):
@@ -288,9 +317,16 @@ def render_card(r, ds, gc, es_finalizado=False):
                 with st.spinner("..."):
                     if cambiar_estado(gc, r['row_excel'], ""):
                         st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)  # cierre actions
+
+        st.markdown("</div>", unsafe_allow_html=True)  # cierre cicla-card
 
 def main():
-    if not check_login(): return
+    if not check_login():
+        return
+
+    # CSS global (opcional): si quieres, puedes mover aquí el CSS y quitarlo de render_card()
+    # st.markdown("""<style> ... </style>""", unsafe_allow_html=True)
 
     with st.sidebar:
         st.header(f"Hola, {USER_LOGIN}")
@@ -298,21 +334,23 @@ def main():
             st.session_state['logged_in'] = False
             st.rerun()
         st.caption(f"Refresh: {REFRESH_SECONDS}s")
-        if HEIC_SUPPORT: st.success("iPhone: ON")
+        if HEIC_SUPPORT:
+            st.success("iPhone: ON")
 
     st.title("Tablero de Pedidos")
-    
+
     gc, ds = connect_google()
-    if not gc: return
+    if not gc:
+        return
 
     all_rows = load_data(gc)
-    
+
     pendientes = [r for r in all_rows if "finalizado" not in r['estado']]
     finalizados = [r for r in all_rows if "finalizado" in r['estado']]
-    
+
     tab1, tab2 = st.tabs([f"📌 Pendientes ({len(pendientes)})", f"✅ Historial ({len(finalizados)})"])
 
-    COLS_POR_FILA = 4 
+    COLS_POR_FILA = 4
 
     with tab1:
         if not pendientes:
@@ -339,6 +377,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-   
-  
- 
