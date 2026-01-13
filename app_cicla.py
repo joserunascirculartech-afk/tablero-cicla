@@ -1,4 +1,4 @@
-import streamlit as st
+ import streamlit as st
 import gspread
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
@@ -40,10 +40,14 @@ USER_LOGIN = "Cicla3D"
 PASS_LOGIN = "Cicla:D"
 REFRESH_SECONDS = 15
 
+
 # ================= 2. CONEXIÓN =================
 @st.cache_resource
 def connect_google():
-    scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+    scopes = [
+        'https://www.googleapis.com/auth/spreadsheets',
+        'https://www.googleapis.com/auth/drive'
+    ]
     creds = None
 
     # Intento 1: Secrets (Streamlit Cloud)
@@ -75,6 +79,7 @@ def connect_google():
         st.error(f"❌ Error de conexión: {e}")
         return None, None
 
+
 # ================= 3. LÓGICA DE DATOS =================
 @st.cache_data(ttl=REFRESH_SECONDS)
 def load_data(_gc):
@@ -91,7 +96,8 @@ def load_data(_gc):
 
         def get_col_idx(keywords):
             for i, h in enumerate(headers):
-                if any(k in str(h).lower().strip() for k in keywords):
+                h_norm = str(h).lower().strip()
+                if any(k in h_norm for k in keywords):
                     return i
             return -1
 
@@ -113,11 +119,9 @@ def load_data(_gc):
         idx_req = get_col_idx(["requiere factura"])
         idx_razon = get_col_idx(["razón social"])
         idx_rut_fac = get_col_idx(["rut facturación"])
-        idx_giro = get_col_idx(["giro"])
         idx_dir_fac = get_col_idx(["dirección facturación"])
         idx_env_dir = get_col_idx(["dirección de envio"])
         idx_env_com = get_col_idx(["comuna/ciudad"])
-        idx_env_ref = get_col_idx(["referencia (opcional)", "referencia opcional"])
         idx_rec_nom = get_col_idx(["nombre de quien recibe"])
         idx_rec_tel = get_col_idx(["telefono de quien recibe"])
 
@@ -130,10 +134,7 @@ def load_data(_gc):
 
             d_raw = get_val(row, idx_dias)
             try:
-                if d_raw:
-                    dias = int(float(d_raw))
-                else:
-                    dias = 999
+                dias = int(float(d_raw)) if d_raw else 999
             except:
                 dias = 999
 
@@ -152,7 +153,11 @@ def load_data(_gc):
                 "desc": get_val(row, idx_desc),
                 "colores": get_val(row, idx_color),
                 "req_fact": "si" in get_val(row, idx_req).lower(),
-                "fact_det": f"Raz: {get_val(row, idx_razon)}\nRUT: {get_val(row, idx_rut_fac)}\nDir: {get_val(row, idx_dir_fac)}",
+                "fact_det": (
+                    f"Raz: {get_val(row, idx_razon)}\n"
+                    f"RUT: {get_val(row, idx_rut_fac)}\n"
+                    f"Dir: {get_val(row, idx_dir_fac)}"
+                ),
                 "env_dir": get_val(row, idx_env_dir),
                 "env_com": get_val(row, idx_env_com),
                 "env_rec": f"{get_val(row, idx_rec_nom)} ({get_val(row, idx_rec_tel)})",
@@ -160,9 +165,11 @@ def load_data(_gc):
             })
 
         return sorted(processed, key=lambda x: x["sort"])
+
     except Exception as e:
         st.error(f"Error procesando datos: {e}")
         return []
+
 
 @st.cache_data(show_spinner=False)
 def get_image(url, _drive_service):
@@ -182,10 +189,8 @@ def get_image(url, _drive_service):
         while not done:
             _, done = dl.next_chunk()
 
-        img = Image.open(fh)
-        img = img.convert("RGB")
+        img = Image.open(fh).convert("RGB")
 
-        # Recorte Automático
         TARGET_SIZE = (400, 250)
         img = ImageOps.fit(img, TARGET_SIZE, method=Image.Resampling.LANCZOS)
 
@@ -194,6 +199,7 @@ def get_image(url, _drive_service):
         return img_byte_arr.getvalue()
     except Exception:
         return None
+
 
 def cambiar_estado(gc, row_num, nuevo_estado):
     try:
@@ -205,6 +211,7 @@ def cambiar_estado(gc, row_num, nuevo_estado):
     except Exception as e:
         st.error(f"Error al guardar: {e}")
         return False
+
 
 # ================= 4. INTERFAZ GRÁFICA =================
 def check_login():
@@ -228,27 +235,9 @@ def check_login():
         return False
     return True
 
+
 def render_card(r, ds, gc, es_finalizado=False):
     with st.container(border=True):
-
-        # ---- CSS (alinear altura de cards) ----
-        # Lo inyecto aquí para que funcione aunque Streamlit re-renderice partes;
-        # si prefieres, puedes moverlo a main() para inyectarlo una sola vez.
-        st.markdown("""
-        <style>
-        .cicla-card{
-          min-height: 720px;           /* AJUSTA ESTO si quieres más/menos alto */
-          display:flex;
-          flex-direction:column;
-          justify-content:space-between;
-        }
-        .cicla-card-top{ flex:1; }
-        .cicla-card-actions{ margin-top:12px; }
-        </style>
-        """, unsafe_allow_html=True)
-
-        st.markdown("<div class='cicla-card'>", unsafe_allow_html=True)
-        st.markdown("<div class='cicla-card-top'>", unsafe_allow_html=True)
 
         # --- CABECERA ---
         c1, c2 = st.columns([1, 1])
@@ -268,9 +257,9 @@ def render_card(r, ds, gc, es_finalizado=False):
         if img_bytes:
             st.image(img_bytes, use_container_width=True)
         else:
-            # Mismo alto que la imagen (250px) para mantener uniformidad
+            # IMPORTANTE: mismo alto que la imagen (250px) para que todas calcen
             st.markdown(
-                "<div style='height: 250px; background-color: #f0f2f6; display: flex; align-items: center; justify-content: center; color: #888; border-radius: 5px;'>Sin Imagen</div>",
+                "<div style='height: 250px; background-color: #f0f2f6; display:flex; align-items:center; justify-content:center; color:#888; border-radius:5px;'>Sin Imagen</div>",
                 unsafe_allow_html=True
             )
 
@@ -292,7 +281,7 @@ def render_card(r, ds, gc, es_finalizado=False):
         fc1.caption(f"Envío:\n**{r['f_envio']}**")
         fc2.caption(f"Entrega:\n**{r['f_entrega']}**")
 
-        # --- PESTAÑAS DETALLES ---
+        # --- PESTAÑAS ---
         with st.expander("📍 Ver Dirección"):
             st.caption(f"{r['env_dir']}\n{r['env_com']}\nRec: {r['env_rec']}")
 
@@ -302,10 +291,9 @@ def render_card(r, ds, gc, es_finalizado=False):
             else:
                 st.caption("❌ No solicitada / Boleta")
 
-        st.markdown("</div>", unsafe_allow_html=True)  # cierre cicla-card-top
+        st.write("")
 
-        # --- BOTÓN DE ACCIÓN (siempre abajo) ---
-        st.markdown("<div class='cicla-card-actions'>", unsafe_allow_html=True)
+        # --- BOTÓN DE ACCIÓN ---
         if not es_finalizado:
             if st.button("✅ Finalizar", key=f"btn_fin_{r['row_excel']}", use_container_width=True, type="primary"):
                 with st.spinner("..."):
@@ -317,16 +305,22 @@ def render_card(r, ds, gc, es_finalizado=False):
                 with st.spinner("..."):
                     if cambiar_estado(gc, r['row_excel'], ""):
                         st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)  # cierre actions
 
-        st.markdown("</div>", unsafe_allow_html=True)  # cierre cicla-card
 
 def main():
     if not check_login():
         return
 
-    # CSS global (opcional): si quieres, puedes mover aquí el CSS y quitarlo de render_card()
-    # st.markdown("""<style> ... </style>""", unsafe_allow_html=True)
+    # ✅ CSS global: fuerza que todas las cards con border tengan el mismo alto
+    # Ajusta 720px según tu necesidad (650 / 700 / 780, etc.)
+    st.markdown("""
+    <style>
+      /* Cada st.container(border=True) usa este wrapper */
+      div[data-testid="stVerticalBlockBorderWrapper"]{
+        min-height: 720px;
+      }
+    </style>
+    """, unsafe_allow_html=True)
 
     with st.sidebar:
         st.header(f"Hola, {USER_LOGIN}")
@@ -358,8 +352,7 @@ def main():
         else:
             cols = st.columns(COLS_POR_FILA)
             for i, r in enumerate(pendientes):
-                col_actual = cols[i % COLS_POR_FILA]
-                with col_actual:
+                with cols[i % COLS_POR_FILA]:
                     render_card(r, ds, gc, es_finalizado=False)
 
     with tab2:
@@ -368,12 +361,12 @@ def main():
         else:
             cols = st.columns(COLS_POR_FILA)
             for i, r in enumerate(finalizados):
-                col_actual = cols[i % COLS_POR_FILA]
-                with col_actual:
+                with cols[i % COLS_POR_FILA]:
                     render_card(r, ds, gc, es_finalizado=True)
 
     time.sleep(REFRESH_SECONDS)
     st.rerun()
+
 
 if __name__ == "__main__":
     main()
