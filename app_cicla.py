@@ -333,7 +333,7 @@ def main():
         st.caption(f"Auto-refresco: {REFRESH_SECONDS}s")
         if HEIC_SUPPORT: st.success("iPhone: ON")
 
-    st.title("🚴 Tablero de Pedidos")
+    st.title("Tablero de Pedidos")
     
     gc, ds = connect_google()
     if not gc: return
