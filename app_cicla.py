@@ -257,7 +257,7 @@ def render_card(r, ds, gc, es_finalizado=False):
         if img_bytes:
             st.image(img_bytes, use_container_width=True)
         else:
-            # IMPORTANTE: mismo alto que la imagen (250px) para que todas calcen
+            # mismo alto que la imagen (250px) para que todas calcen
             st.markdown(
                 "<div style='height: 250px; background-color: #f0f2f6; display:flex; align-items:center; justify-content:center; color:#888; border-radius:5px;'>Sin Imagen</div>",
                 unsafe_allow_html=True
@@ -275,11 +275,15 @@ def render_card(r, ds, gc, es_finalizado=False):
         colores_corto = r['colores'][:25] + "..." if len(r['colores']) > 25 else r['colores']
         st.markdown(f"🎨 {colores_corto}")
 
-        # --- FECHAS ---
+        # --- FECHAS (FIX: siempre mostrar algo para que no cambie la altura) ---
         st.divider()
         fc1, fc2 = st.columns(2)
-        fc1.caption(f"Envío:\n**{r['f_envio']}**")
-        fc2.caption(f"Entrega:\n**{r['f_entrega']}**")
+
+        envio = (r['f_envio'] or "").strip() or "—"
+        entrega = (r['f_entrega'] or "").strip() or "—"
+
+        fc1.caption(f"Envío:\n**{envio}**")
+        fc2.caption(f"Entrega:\n**{entrega}**")
 
         # --- PESTAÑAS ---
         with st.expander("📍 Ver Dirección"):
@@ -342,7 +346,10 @@ def main():
     pendientes = [r for r in all_rows if "finalizado" not in r['estado']]
     finalizados = [r for r in all_rows if "finalizado" in r['estado']]
 
-    tab1, tab2 = st.tabs([f"📌 Pendientes ({len(pendientes)})", f"✅ Historial ({len(finalizados)})"])
+    tab1, tab2 = st.tabs([
+        f"📌 Pendientes ({len(pendientes)})",
+        f"✅ Historial ({len(finalizados)})"
+    ])
 
     COLS_POR_FILA = 4
 
